@@ -10,7 +10,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -86,7 +88,7 @@ func (f *Finder) Run() error {
 			}
 		}
 	}
-	return nil
+	return f.findFromMPS()
 }
 
 func (f *Finder) OutputJSON(filename string) (int, error) {
@@ -169,4 +171,155 @@ func (f *Finder) findFromSigma(data []byte) error {
 		f.values[d] = struct{}{}
 	}
 	return nil
+}
+
+func (f *Finder) findFromMPS() error {
+	fmt.Println("Crawl https://miningpoolstats.stream ...")
+	m := NewMpsSiper()
+	ts, err := m.ts()
+	if err != nil {
+		return err
+	}
+	allcoins, err := m.AllCoins(ts)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Crawl %d  coins \n", len(allcoins))
+	for _, coin := range allcoins {
+		fmt.Printf("Crawl '%s' pools \n", coin)
+		pools, err := m.CoinPools(coin, ts)
+		if err != nil {
+			fmt.Printf("Crawl '%s' pools error:%s\n", coin, err.Error())
+			continue
+		}
+		fmt.Printf("Crawl '%s' '%d' pools \n", coin, len(pools))
+		for _, pool := range pools {
+			u, err := url.Parse(pool)
+			if err != nil {
+				continue
+			}
+			f.values[u.Host] = struct{}{}
+		}
+	}
+	return nil
+}
+
+// sipder
+// https://miningpoolstats.stream/
+type MpsSiper struct{}
+
+func NewMpsSiper() *MpsSiper {
+	return &MpsSiper{}
+}
+
+var _timestamp = "https://data.miningpoolstats.stream/data/time?t=%d"
+
+func (m *MpsSiper) ts() (int, error) {
+	req, err := http.NewRequest("GET", fmt.Sprintf(_timestamp, time.Now().Unix()), nil)
+	if err != nil {
+		return 0, err
+	}
+	m.setHeader(req)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(string(data))
+}
+
+var _allcoins = "https://data.miningpoolstats.stream/data/coins_data.js?t=%d"
+
+type MpsCoinsData struct {
+	Data []struct {
+		Name string `json:"name"`
+		Page string `json:"page"`
+	} `json:"data"`
+}
+
+func (m *MpsSiper) AllCoins(ts int) ([]string, error) {
+	req, err := http.NewRequest("GET", fmt.Sprintf(_allcoins, ts), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	m.setHeader(req)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	v := &MpsCoinsData{}
+	if err = json.Unmarshal(data, v); err != nil {
+		return nil, err
+	}
+
+	res := make([]string, 0, len(v.Data))
+	for i := range v.Data {
+		res = append(res, v.Data[i].Page)
+	}
+	return res, nil
+}
+
+var _coinsPools = "https://data.miningpoolstats.stream/data/%s.js?t=%d"
+
+type MpsCoinPoolsData struct {
+	Data []struct {
+		Url string `json:"url"`
+	} `json:"data"`
+}
+
+func (m *MpsSiper) CoinPools(coin string, ts int) ([]string, error) {
+	req, err := http.NewRequest("GET", fmt.Sprintf(_coinsPools, coin, ts), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	m.setHeader(req)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	v := &MpsCoinPoolsData{}
+	if err = json.Unmarshal(data, v); err != nil {
+		return nil, err
+	}
+
+	res := make([]string, 0, len(v.Data))
+	for i := range v.Data {
+		res = append(res, v.Data[i].Url)
+	}
+	return res, nil
+}
+
+func (m *MpsSiper) setHeader(req *http.Request) {
+	req.Header.Set("authority", "data.miningpoolstats.stream")
+	req.Header.Set("accept", "application/json, text/javascript, */*; q=0.01")
+	req.Header.Set("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36")
+	req.Header.Set("sec-gpc", "1")
+	req.Header.Set("origin", "https://miningpoolstats.stream")
+	req.Header.Set("sec-fetch-site", "same-site")
+	req.Header.Set("sec-fetch-mode", "cors")
+	req.Header.Set("sec-fetch-dest", "empty")
+	req.Header.Set("referer", "https://miningpoolstats.stream/")
+	req.Header.Set("accept-language", "en,en-US;q=0.9")
 }
