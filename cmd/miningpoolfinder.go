@@ -185,8 +185,12 @@ func (f *Finder) findFromMPS() error {
 		return err
 	}
 	fmt.Printf("Crawl %d  coins \n", len(allcoins))
-	for _, coin := range allcoins {
-		fmt.Printf("Crawl '%s' pools \n", coin)
+	for i, coin := range allcoins {
+		if i%30 == 0 {
+			if ts, err = m.ts(); err != nil {
+				continue
+			}
+		}
 		pools, err := m.CoinPools(coin, ts)
 		if err != nil {
 			fmt.Printf("Crawl '%s' pools error:%s\n", coin, err.Error())
